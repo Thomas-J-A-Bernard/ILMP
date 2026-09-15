@@ -139,10 +139,12 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
     misfit : class object
         misfit between the observed and modelled dataset
     '''
+       
+    ## ===================================================================== ##
+    ## ------------------------ 1:PARAMETERS ------------------------------- ##
+    ## ===================================================================== ##
     
-    modelled_data = Modelled_Data()
-    
-    ### ======================= 1:PARAMETERS ============================== ###
+    modelled_data = Modelled_Data()     # results of the simulation
     
     gg = param.gg                       # geothermal gradient
     T0 = param.T0                       # surface temperature
@@ -193,18 +195,6 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
     if (ahea_calc == True or afta_calc == True or aftmtl_calc == True):
         thermo_node = np.squeeze(data['thermo_meas']['node'])          
     
-    # update parameters for change in uplift through time    
-    if hasattr(param, 'ua'):            
-        ua = param.ua
-    else:
-        ua = []    
-
-    # update parameters for spatial and temporal variability in uplift
-    if hasattr(param, 'nuv'):           
-        nuv = param.nuv
-    else:
-        nuv = 0
-    
     # update parameters for spatial variability in erodibility    
     if hasattr(param, 'kflag'):         
         kflag = param.kflag
@@ -217,7 +207,9 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
     else:
         hlflag = 0
     
-    ### ================= 2:RIVER AND HILLSLOPE MODEL ===================== ###
+    ## ===================================================================== ##
+    ## ------------------- 2:RIVER AND HILLSLOPE MODEL --------------------- ##
+    ## ===================================================================== ##
     
     start_time = datetime.datetime.now()
     
@@ -244,19 +236,12 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
     # define an uniform or spatial variable hillslope length
     if hlflag == 0:
         hl = np.ones(np.shape(z0))*hl
-        print('test1')
     elif hlflag == 1:
         hl = data['hillslope']['length']
-        print('test2')
     
     hdx = hl/(hdn - 1)
     # generate initial hillslope profile according to icflag
-    
-    # change 26.07.13
-    # hillx = np.linspace(hl, 0, hdn)
-    hillx = np.linspace(1, 0, hdn)[:, None] * hl[None, :]
-    
-    
+    hillx = np.linspace(1, 0, hdn)[:, None] * hl[None, :]    
     hill0 = np.zeros((hdn, max(z0.shape)))
     
     # generate hillslope for an initial slope for rivers
@@ -306,35 +291,19 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
     elif kflag == 1:
         K = data['erodibility']
     
-    # define an uniform uplift (nuv=0) or variable spatial and temporal uplift (nuv=1)
-    U_initial = np.zeros((1, max(z0.shape)))
-    if nuv == 0:
-        U_initial[0,:] = U
-    elif nuv == 1:
-        U_initial = data['uplift']*1e-3
-        
-    U_final = U_initial[:,0]
-    U_initial[:,0] = 0
-        
-    # number of steps per time interval (define by the change in uplift through time)
-    if len(ua) == 0:
-        TI = np.array([tt*1e6, 0])
+    # define the uplift depending its initial dimension
+    if np.ndim(U) == 0:
+        U_time = np.ones(len(x))*U
     else:
-        TI = np.flip(np.sort(ua))*1e6
-        TI = np.insert(TI, [0, TI.size], [tt*1e6, 0])
+        U_time = np.copy(U)
         
-    nsteps = np.round(-np.diff(TI)/dt)
+    tsteps = int(param.tt*1e6/param.dt)
     steps_cosmo = t_record/dt
     
     # initialize hillslope variables
     hillz = np.copy(hill0)
     
-    # change 26.07.13
-    # maxi = max(hillx.shape)
     maxi = hillx.shape[0]
-    
-    # change 26.07.13
-    # hillx = np.transpose(np.tile(hillx, (max(z0.shape), 1))) # change 26.07.13
     
     qs = np.zeros(np.shape(hillx))
     xm = np.zeros(np.shape(hillx))
@@ -347,7 +316,7 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
     xm[0,:] = xm[0,:]+(0.2*hdx)
     k1xmm = k1*xm[maxi-1]
     k1xm = k1*xm
-    # crit_elevation = np.tan(crit_slope)*hl/hdx
+
     crit_elevation = np.tan(crit_slope)*hdx
     
     # initialize outlet node elevation
@@ -361,51 +330,64 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
     z00 = z0
     steps = 0
     o = 0
-    s = 0
     p = 0
     
     # initialize model record
     erosion_hillslope = np.zeros((int(t_record/dt), np.shape(hillz)[0], np.shape(hillz)[1]))
-    erosion_river = np.zeros((int(np.sum(nsteps)), max(z0.shape)))
+    erosion_river = np.zeros((tsteps, max(z0.shape)))
     time_record = np.round(np.arange(start_dtr, end_dtr+dtr, dtr)*1e6)
     elevation_record = [np.zeros(len(z1)) for k in range(len(time_record))]
     
     # initialize thermo variables
     if (ahea_calc == True or afta_calc == True or aftmtl_calc == True):
-        topo = np.zeros((Length(thermo_node), int(np.sum(nsteps))))
-        exhumation = np.zeros((Length(thermo_node), int(np.sum(nsteps))))
+        topo = np.zeros((Length(thermo_node), tsteps))
+        exhumation = np.zeros((Length(thermo_node), tsteps))
     
-    # number of uplift step
-    us = len(ua) + 1
+    # ================================================= #    
+    # --- START MAIN TIME LOOP FOR SPIM CALCULATION --- #
+    # ================================================= #
     
-    # start time loops
-    for l in range(0, us):
-    
-        for t in range(0, int(nsteps[l])):
+    for s in range(tsteps):
             
-            steps += 1
-            s += 1
-            time = dt*s
+            steps = s + 1
+            time = dt*steps
             
-            U = np.copy(U_initial)
-            U_hill = np.tile(U[l,:], (maxi, 1))
-            U_hill[:, 0] = U_final[l]  
+            # ======================================= #
+            # --- UPDATE PARAMETER DEPENDING TIME --- #
+            # ======================================= #
             
-            # update uplift for river capture event
+            # uplift for this timestep
+            if np.ndim(U_time) == 1:
+                U = np.copy(U_time)
+            elif np.ndim(U_time) == 2:
+                U = np.copy(U_time[s,:])
+                
+            # hillslope uplift
+            U_hill = np.tile(U, (maxi,1))
+            # preserve uplift at hillslope outlet
+            U_hill[:, 0] = U[0]
+            # no uplift at river outlet
+            U[0] = 0
+            
+            # update uplift for river capture event 
             for i in range(len(capture)):
                 if time < (tt - capture['river' + str(i+1)]['time'])*1e6:
                     U_hill[:, capture['river' + str(i+1)]['upstream_index']] = capture['river' + str(i+1)]['initial_uplift']*1e-3
-                    U[l, capture['river' + str(i+1)]['upstream_index']] = capture['river' + str(i+1)]['initial_uplift']*1e-3
-
-            # update outlet elevation for base-level drop
+                    U[capture['river' + str(i+1)]['upstream_index']] = capture['river' + str(i+1)]['initial_uplift']*1e-3
+            
+            # update outlet elevation for base-level drop 
             for i in range(len(drop)):
                 if time > (tt - drop['drop'+str(i+1)]['time'])*1e6:                   
                     if i == len(drop) - 1:
                         z00[0] = initial_elevation[0]
                     else:
                         z00[0] = drop['drop'+str(i+2)]['initial_level']
-                     
-            # calculate the slope of stream and new river elevation
+            
+            # ======================================== #           
+            # --- CALCULATE RIVER ELEVATION (SPIM) --- #
+            # ======================================== # 
+            
+            # calculate slope between node
             if pixel == 0:
                 S = np.diff(np.transpose(z00[pairs.astype(int)-1]), axis=0)/(dx_dem*skipping_factor)
             else:
@@ -415,13 +397,18 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
                 distance_diff[distance_diff <= 150] = 150
                 S = elevation_diff/distance_diff
             S = np.insert(S, 0, 0)
-            
+                      
+            # calculate new river elevation
             if pixel == 0:
-                z1 = z00 + (U[l,:] - K*(area*dx_dem**2)**m*np.sign(S)*abs(S)**n)*dt
+                z1 = z00 + (U - K*(area*dx_dem**2)**m*np.sign(S)*abs(S)**n)*dt
             else:
-                z1 = z00 + (U[l,:] - K*area**m*np.sign(S)*abs(S)**n)*dt
+                z1 = z00 + (U - K*area**m*np.sign(S)*abs(S)**n)*dt
  
-            # calculate river segment alone or initiate the capture 
+            # ========================================== #
+            # --- UPDATE RIVER CAPTURE river capture --- #
+            # ========================================== #
+            
+            # calculate river segment alone or initiate capture
             for i in range(len(capture)):
                 if capture['river' + str(i+1)]['capture_done'] == False:
                     if time < (tt - capture['river' + str(i+1)]['time'])*1e6:
@@ -430,6 +417,10 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
                         pairs[capture['river' + str(i+1)]['node'] - 1, 1] = pairs[capture['river' + str(i+1)]['node'], 0]
                         area[capture['river' + str(i+1)]['downstream_index']] = area[capture['river' + str(i+1)]['downstream_index']] + capture['river' + str(i+1)]['capture_area']
                         capture['river' + str(i+1)]['capture_done'] = True
+            
+            # ======================================================= #           
+            # --- CALCULATE HILLSLOPE ELEVATION (DIFFUSION MODEL) --- #
+            # ======================================================= #
             
             # calculate qs of hillslope
             qs[0,:] = k1*(hill0[1,:] - hill0[0,:])**hn
@@ -443,7 +434,7 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
             hillz = hillz + U_hill*dt
             hillz[-1,:] = z1
             
-            ## change 26.07.13 (need to fix for too steep hillslope)
+            # # need to better implement for too steep hillsope
             # S_hillz = -np.diff(hillz)
             # hillz[[S_hillz>crit_elevation, np.zeros((1, np.shape(hillz)[1]))] == 1] = hillz[[np.zeros((1, np.shape(hillz)[1])), S_hillz>crit_elevation] == 1]+crit_elevation
             # S_hillz = -np.diff(hillz, axis=0)
@@ -451,18 +442,20 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
             # rows, cols = np.where(mask)
             # hillz[rows, cols] = hillz[rows + 1, cols] + crit_elevation[cols]
             
+            # ===================================== #           
+            # --- RECORD PARAMETERS AND RESULTS --- #
+            # ===================================== #
             
             # record elevation and exhumation at thermo sample nodes
             if (ahea_calc == True or afta_calc == True or aftmtl_calc == True):
-                topo[:,s-1] = z1[thermo_node-1]
-                exhumation[:,s-1] = U[l,thermo_node-1] - (z1[thermo_node-1] - z00[thermo_node-1])/dt
+                topo[:,s] = z1[thermo_node-1]
+                exhumation[:,s] = U[thermo_node-1] - (z1[thermo_node-1] - z00[thermo_node-1])/dt
             
             # record fluvial erosion
-            erosion_river[steps-1,:] = (U[l,:] + (z00 - z1)/dt)
+            erosion_river[steps-1,:] = (U + (z00 - z1)/dt)
             
             # record hillslope erosion for crnc calculation
-            if sum(nsteps)-steps < steps_cosmo:
-                # print(steps)
+            if tsteps - steps < steps_cosmo:
                 o += 1                
                 
                 # do not work (don't know why)
@@ -472,40 +465,44 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
                 erosion_hillslope[o-1,1:-2,:] = (qs[2:-1,:] - qs[:-3,:])/(2*hdx)
                 erosion_hillslope[o-1,-2,:] = (qs[-2,:] - qs[-3,:])/hdx
                 erosion_hillslope[o-1,-1,:] = erosion_river[steps-1,:]
-                
-            z00 = z1
-            hill0 = hillz
             
+            # record elevation 
             if time in time_record:
                 elevation_record[p] = z1
                 p = p + 1
+                
+            # update hillslope and river elevation
+            z00 = z1
+            hill0 = hillz
     
-    erosion_river = erosion_river*1e3
-    erosion_hillslope = erosion_hillslope*1e3            
-    elevation_river = z1
-    elevation_hillslope = hillz
+    modelled_data.elevation_river = z1
+    modelled_data.elevation_hillslope = hillz
+    if not inverse:
+        modelled_data.erosion_river = erosion_river*1e3
+        modelled_data.erosion_hillslope = erosion_hillslope*1e-3
     
-    modelled_data.elevation_river = elevation_river
-    modelled_data.erosion_river = erosion_river 
-    modelled_data.elevation_hillslope = elevation_hillslope
-    modelled_data.erosion_hillslope = erosion_hillslope
+    # ==================================== #           
+    # --- CALCULATE TOPOGRAPHIC MISFIT --- #
+    # ==================================== #
     
     # count the number of non-nan values
-    n = np.count_nonzero(~np.isnan(elevation_river))
+    n = np.count_nonzero(~np.isnan(z1))
     # calculate the topographic misfit
     misfit_topo = np.nansum(np.log(2*np.pi)/2 + np.log(16) + 0.5*((z1 - initial_elevation)/16)**2)/n
     
     end_time = datetime.datetime.now()
-    
     if not inverse:
         print('Log-likelihood topo misfit: ' + str(misfit_topo))
         print('Topographic calculation: {}'.format(end_time-start_time))
         print('-------------------')
     
-    ### ======================= 3:COSMOGENIC MODEL ======================== ###
+    ## ===================================================================== ##
+    ## ---------------- 3:COSMOGENIC RADIONUCLIDE MODEL -------------------- ##
+    ## ===================================================================== ##
     
     start_time = datetime.datetime.now()
     
+    erosion_hillslope = erosion_hillslope*1e3
     if crn_calc == True:
         cosmo_meas = data['cosmo_meas']
         cosmo_meas_ind = cosmo_meas['ind']
@@ -521,7 +518,6 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
         
         nc = Length(cosmo_meas_tcn)
         node = np.unique(np.concatenate(cosmo_meas_ind))
-        # TCN_hillslope = np.zeros((max(node), int(hl/hdx + 1)))
         TCN_hillslope = np.zeros((max(node), hdn))
         param.cosmo_pressure = 1
         
@@ -531,7 +527,7 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
         
         for o in range(0, max(node.shape)):
             delattr(param, 'cosmo_pressure')
-            elevation = elevation_hillslope[:, node[o]]
+            elevation = hillz[:, node[o]]
             erosion = np.squeeze(erosion_hillslope[:, :, node[o]])
             param.cosmo_lat = np.squeeze(np.tile(cosmo_lat_river[node[o]], (1, max(elevation.shape))))
             param.cosmo_long = np.squeeze(np.tile(cosmo_long_river[node[o]], (1, max(elevation.shape))))
@@ -559,9 +555,10 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
             if param.cosmo_long.all() < 0:
                 param.cosmo_long = param.cosmo_long + 360
             
-            ### ============== 3.1:NUCLIDE-SPECIFIC ASSIGNMENTS =============== ###
+            # ==================================== #
+            # --- NUCLIDE SPECIFIC ASSIGNMENTS --- #
+            # ==================================== #
             
-            # nuclide specific assignments
             if nuclide == 10:
                 mc.Natoms = float(al_be_consts_v22['Natoms10'])
                 mc.sigma190 = float(al_be_consts_v22['sigma190_10'])
@@ -592,7 +589,9 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
                 P_ref_Lm, delP_ref_Lm = float(al_be_consts_v22['P26_ref_Lm']), float(al_be_consts_v22['delP26_ref_Lm'])
                 nstring = 'Al-26'
             
-            ### ================ 3.2: GET THE EROSION RATE ==================== ###
+            # ============================ #
+            # --- GET THE EROSION RATE --- #
+            # ============================ #
             
             tv = np.append(np.append(np.append(np.arange(0, 7000, 500), 6900), np.arange(7500, 12500, 1000)), np.arange(12000, 801000, 1000))
             tv = np.append(tv, np.logspace(np.log10(810000), 7, 200))
@@ -617,9 +616,11 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
                 c3.L = L
                 c3.P_sp_t = P_St
                 c3.P_mu = P_mu
-                c3.L_muon = 4656                # attetuation length scale of muons in g/cm-2 according to Braucher et al., 2013
+                c3.L_muon = 4656        # attetuation length scale of muons in g/cm-2 according to Braucher et al., 2013
                 
-                ### ==== 3.3:FORWARD MODELLING OF SURFACE CN CONCENTRATION ==== ###
+                # ====================================================== #
+                # --- FORWARD MODELLING OF SURFACE CRN CONCENTRATION --- #
+                # ====================================================== #
                 
                 E = erosion[:,i]
                 E1 = E/10*rho_c/1e3
@@ -634,8 +635,6 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
                 I = np.argwhere(np.abs(E1[:] - E1[0]) > np.abs(E1[0])/1e3)              # percentage erosion
                 
                 if I.size > 0:
-                    # print('Maximum erosion difference: ' + str(np.max(np.unique(np.abs(E1 - E1[0])))))
-                    
                     I = I[0, 0]  # proper scalar extraction
                 
                     if 0 <= I < E1.shape[0]:
@@ -673,14 +672,14 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
                 else:
                     N[i] = n_profile[0]                
             
-            # TCN_hillslope[node[o]-1,:] = N
             TCN_hillslope[node[o]-1,:] = N
         
         # calculate the mean tcn concenttration - for catchments the in-situ TCN are multiplied with the local erosion rate and the sum of all the products is divided by the sum of all local erosion rate
         tcn_mod = np.zeros(max(cosmo_meas_lat.shape))
         for i in range(0, max(cosmo_meas_lat.shape)):
             if cosmo_meas_type[i] == 1:
-                tcn_mod[i] = sum(sum(TCN_hillslope[cosmo_meas_ind[i][cosmo_meas_ind[i][:]>=0]-1,:]*np.squeeze(erosion_hillslope[1999,:,cosmo_meas_ind[i][cosmo_meas_ind[i][:]>=0]-1])))/sum(sum(erosion_hillslope[1999,:,cosmo_meas_ind[i][cosmo_meas_ind[i][:]>=0]-1]))
+                tind = int(param.t_record/param.dt-1)
+                tcn_mod[i] = sum(sum(TCN_hillslope[cosmo_meas_ind[i][cosmo_meas_ind[i][:]>=0]-1,:]*np.squeeze(erosion_hillslope[tind,:,cosmo_meas_ind[i][cosmo_meas_ind[i][:]>=0]-1])))/sum(sum(erosion_hillslope[tind,:,cosmo_meas_ind[i][cosmo_meas_ind[i][:]>=0]-1]))
             
             if cosmo_meas_type[i] == 2:
                 tcn_mod[i] = TCN_hillslope[cosmo_meas_ind[i,0],0]
@@ -688,7 +687,10 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
             if not inverse:
                 print('TCN sample ' + str(i) + ' = ' + str(tcn_mod[i]))
         
-        # calculate misfit for the cosmogenic information
+        # ================================================== #
+        # --- CALCULATE THE MISFIT FOR CRN CONCENTRATION --- #
+        # ================================================== #
+        
         if 'tcn_error' in cosmo_meas:
             modelled_data.tcn = tcn_mod
             misfit_tcn = sum(np.log(2*np.pi/2) + np.log(cosmo_meas_tcn_error) + 0.5*((tcn_mod - cosmo_meas_tcn)/cosmo_meas_tcn_error)**2)/nc
@@ -706,7 +708,9 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
         tcn_mod = np.nan
         misfit_tcn = 0
     
-    ### =============== 4:THERMOCHRONOLOGICAL AGES MODEL ================== ###
+    ## ===================================================================== ##
+    ## -------------- LOW-TEMPERATURE THERMOCHRONOLOGY MODEL --------------- ##
+    ## ===================================================================== ##
     
     if (ahea_calc == True or afta_calc == True or aftmtl_calc == True):
         start_time = datetime.datetime.now()
@@ -750,6 +754,10 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
             f = interp1d(time, topo[i,:], fill_value='extrapolate')
             topo_new[i,:] = f(time_new)
         
+        # ======================================================= #
+        # --- CALCULATE GEOTHERMAL GRADIENT DEPENDING EROSION --- #
+        # ======================================================= #
+        
         # initialize temperature and heat production
         T = np.zeros((tsteps, nt, zsteps))
         hp = np.zeros((1, nt, zsteps))
@@ -769,7 +777,7 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
             T[t-1,:,j] = T[t-2,:,j] + SC*(T[t-2,:,j+1] - 2*T[t-2,:,j] + T[t-2,:,j-1]) + hp[0,:,j]*dt_thermo
             change = sum(abs(T[t-2,0,:] - T[t-1,0,:]))
         
-        # time-varaible exhumation/burial history
+        # time-variable exhumation/burial history
         Tvar = np.zeros((tsteps, nt, zsteps))
         Tvar[0,:,:] = T[t-1,:,:]
         Tvar[:,:,0] = T[:,:,0]
@@ -830,7 +838,11 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
         modelled_data.time = thermo[0].time
         modelled_data.temperature = thermo[0].temp
         
-        # calculate thermochronological ages
+        # ========================================================== #
+        # --- CALCULATE LOW-TEMPERATURE THERMOCHRONOLOGICAL AGES --- #
+        # ========================================================== #
+        
+        # initialize variable
         thermo_data = Thermo_Data()
         thermo_data.zfta = np.zeros(nt)
         thermo_data.afta = np.zeros(nt)
@@ -840,13 +852,19 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
         
         # calculate low-temperature isotopic system data for each sample
         for i in range(0, nt):
-            #print('---------- thermo sample ' + str(i) + ' ----------')
             thermo[i].time[-1] = 0
             thermo[i].time = np.flip(thermo[i].time)
             thermo[i].temp = np.flip(thermo[i].temp)
             
-            # calculate ZFT age (Tagami et al., 1998)
+            # ================================== #
+            # --- ZFTA (TAGAMI ET AL., 1998) --- #
+            # ================================== #
+            
             # modelled_data.zfta[i], ftld, ftldmean, ftldsd = Mad_Zirc(thermo[i].time, thermo[i].temp, 0, 1)
+            
+            # ============================================== #
+            # --- AFTA AND AFTMTL (KETCHAM ET AL., 2007) --- #
+            # ============================================== #
             
             # reduce time-temperature path to ~20 nodes from 180°C to surface temperature in preparation for AFT data calculation
             if (afta_calc == True or aftmtl_calc == True):
@@ -865,13 +883,17 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
                 else:
                     thermo_data.afta[i], thermo_data.aftmtl[i], thermo_data.aftmtl_pdf[i,:] = Fd_Dpar_L0(thermo[i].time[0:nn][0::dd], thermo[i].temp[0:nn][0::dd])
             
-            # remove time-temperature nodes above 200°C in preparation for AHe data calculation
+            # ============================================================== #
+            # --- AHeA (FLOWERS ET AL., 2009 AND GLOTZBACH ET AL., 2024) --- #
+            # ============================================================== #
+            
+            # remove time-temperature nodes above 200°C in preparation for AHe data calculation (RDAMM function will crash if some temperature points are too hot)
             if ahea_calc == True:
                 ind = np.where(thermo[i].temp < 200)
                 thermo[i].time = np.delete(thermo[i].time[ind], [-1])
                 thermo[i].temp = np.delete(thermo[i].temp[ind], [-1])
                 
-                # calculate AHe grain age (Flowers et al., 2009, Glotzbach and Ehlers, 2024) (RDAMM function will crash if some temperature points are too hot)
+                # calculate AHe grain age
                 if thermo_meas['ahea'][i] == -1:
                     thermo_data.ahea[i] = np.nan
                 else:
@@ -879,13 +901,17 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
                         thermo_data.ahea[i] = RDAAM_Calculation(thermo[i].time, thermo[i].temp)
                     else:
                         if thermo_meas['model'][i] == 1:
+                            # calculate ages following Flowers et al., 2009
                             thermo_data.ahea[i] = RDAAM_Calculation(thermo[i].time, thermo[i].temp)
                         elif thermo_meas['model'][i] == 2:
+                            # calculate ages following Glotzbach et al., 2024
                             _, _, _, age_transect = HeliumGrainAge(thermo[i].time, thermo[i].temp, radius=thermo_meas['grain_radius'][i], U=thermo_meas['U'][i], Th=thermo_meas['Th'][i], Sm=thermo_meas['Sm'][i])
                             age_length = len(age_transect)
                             thermo_data.ahea[i] = age_transect[int(age_length*thermo_meas['pit_location'][i])]
                         else:
                             thermo_data.ahea[i] = np.nan
+            else:
+                thermo_data.ahea[i] = np.nan
             
             if not inverse:
                 print('AHe age ' + str(i) + ' = ' + str(thermo_data.ahea[i]))
@@ -893,7 +919,10 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
                 print('AFT mtl ' + str(i) + ' = ' + str(thermo_data.aftmtl[i]))
                 # print('ZFT age ' + str(i) + ' = ' + str(modelled_data.zfta[i]))
         
-        # calculate the misfit for the thermochronological data
+        # ============================================================ #
+        # --- CALCULATE LOW-TEMPERATURE THERMOCHRONOLOGICAL MISFIT --- #
+        # ============================================================ #
+        
         if ahea_calc == True:
             if 'ahea' in thermo_meas:
                 
@@ -963,8 +992,9 @@ def Ilm_Forward_Na(param, data, crn_calc=False, ahea_calc=False, afta_calc=False
         misfit_afta = 0
         misfit_aftmtl = 0
     
-    
-    ### ================ 5:MISFIT RESUME OF THE MODEL ===================== ###    
+    ## ===================================================================== ##
+    ## -------------------- MISFIT RESUME OF THE MODEL --------------------- ##
+    ## ===================================================================== ##   
     
     # store individual logL and global normalised misfit
     misfit = Misfit()

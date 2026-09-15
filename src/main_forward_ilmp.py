@@ -21,7 +21,7 @@ from collections import defaultdict, deque
 from parameters_class import Parameters
 from ilm_forward_na import Ilm_Forward_Na
 from catchment_dictionnary_functions import DictionnaryImport, DictionnaryExport
-from geologic_functions import Lithology_to_Erodibility, Block_to_Uplift, Tilting_to_Uplift, Base_Level_Drop, River_Capture, Low_Temperature_Thermochronology, Low_Temperature_Thermochronology2, Low_Temperature_Thermochronology3, Cosmogenic_Nuclide, Cosmogenic_Nuclide2, Cosmogenic_Nuclide3, Variable_Hillslope_lenght
+from geologic_functions import Lithology_to_Erodibility, Block_to_Uplift, Tilting_to_Uplift, Tilting_Uplift, Base_Level_Drop, River_Capture, Low_Temperature_Thermochronology, Low_Temperature_Thermochronology2, Low_Temperature_Thermochronology3, Cosmogenic_Nuclide, Cosmogenic_Nuclide2, Cosmogenic_Nuclide3, Variable_Hillslope_lenght
 from plotting_result_functions import River_Point_Map_Plot, River_Profile_Map_Points_Plot, River_Profile_Points_Plot, River_Map_Points_Plot, River_Profile_Obs_vs_Mod_Plot, Interpolation_Map_Plot
 from general_functions import Find_Upstream_Index
 from matlab_extract import Matlab_Extract
@@ -31,22 +31,26 @@ home_dirname = str(Path(__file__).parent.parent.absolute())
 # restore the rcparams from matplotlib's internal default style
 plt.rcdefaults()
 
-#%% ========================== CATCHMENT DATASET ===========================%%#
+#%% ========================== CATCHMENT DATASET ========================== %%#
+### ======================================================================= ###
+
 basin = 'neckar'
 basin_data = DictionnaryImport(home_dirname + '/data/basins/' + basin + '/' + basin + '-basin_r3_t20.pkl')
 Low_Temperature_Thermochronology3(basin_data, home_dirname + '/data/basins/' + basin + '/' + basin + '-basin_thermo.csv') 
 Cosmogenic_Nuclide3(basin_data, home_dirname + '/data/basins/' + basin + '/' + basin + '-basin_cosmo.csv')
 
-#%% ========================== MODEL PARAMETERS ============================%%#
+#%% ========================== MODEL PARAMETERS =========================== %%#
+### ======================================================================= ###
+
 # set model parameters
 param = Parameters(gg=17.5, T0=15, lr=5, TD=1.5e-6, rho_c=2700, hpc=18e-10, cp_c=700, 
-                   tt=60, dt=1e3, dtr=0.2, start_dtr=23, end_dtr=25,
+                   tt=100, dt=1e4, dtr=0.2, start_dtr=23, end_dtr=25,
                    U=0.05, K=1.0e-6, m=0.5, n=1, icflag=2, islope=0.01, Ui=0.05, Ki=1e-6, ee=16, pixel=1,
                    hl=100, hdn=10, hk=0.01, hm=0, hn=1, crit_slope=30,
                    muon=1, cosmo_thickness=0, cosmo_topocorr=1, cosmo_aa='std', dx_cosmo=1000, t_record=2e6)
 
-# # set variable uplift
-# Tilting_to_Uplift(basin_data, param, direction='degree', uplift=[0.05, 0.05], gradient=[0, 0], degree=[0, 0], time=[0], spatial=False, block_ind=[6,10], block_uplift=[0.025,0.035])
+# set variable uplift
+# Tilting_Uplift(basin_data, param, uplift=[0.025, 0.05], gradient=[0.0, 0.0], degree=[0.0, 0.0], time=[50], direction='degree')
 
 # set variable lithology erodibility
 # k_sr, k_br = 1e-6, 0.6e-6
@@ -58,28 +62,45 @@ param = Parameters(gg=17.5, T0=15, lr=5, TD=1.5e-6, rho_c=2700, hpc=18e-10, cp_c
 # # set base-level drop
 # Base_Level_Drop(basin_data, initial_level=[], drop_time=[])
 
-# set variable hillslope lenght
-Variable_Hillslope_lenght(basin_data, param, random=True, minimum=100, maximum=200)
+# # set variable hillslope lenght
+# Variable_Hillslope_lenght(basin_data, param, random='topo', minimum=100, maximum=200)
+
+tt = param.tt*1e6
+dt = param.dt
+mu = 0.075
+au = 0.05
+pu = 1e8
+
+t = np.arange(0, tt, dt)
+u = mu + au * np.sin(2 * np.pi * t / pu)
+U = u[:, np.newaxis]*np.ones((1, len(basin_data['x'])))
+
+param.U = U
+
+plt.plot(t, U[:,0], marker='o', ls='-')
 
 # sys.exit('...')
 
-#%% ========================== FORWARD MODELLING ===========================%%#
+#%% ========================== FORWARD MODELLING ========================== %%#
+### ======================================================================= ###
 
 start_time = datetime.datetime.now()
-results = Ilm_Forward_Na(param, basin_data, crn_calc=True, ahea_calc=False, afta_calc=False, aftmtl_calc=False, inverse=False)
+results = Ilm_Forward_Na(param, basin_data, crn_calc=True, ahea_calc=False, afta_calc=True, aftmtl_calc=False, inverse=False)
 end_time = datetime.datetime.now()
 print('Model duration time: {}'.format(end_time-start_time))
 
-# sys.exit('...')
+sys.exit('...')
 
 #%% ========================== FAST RESULT PLOTTING ======================= ##%
+### ======================================================================= ###
 
-# plot map of catchment river point
-River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevation (m)')
+# # plot map of catchment river point
+# River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevation (m)')
 
 # sys.exit('...')
 
 #%% ============================ PLOT: UPLIFT FIELD ======================= ##%
+### ======================================================================= ###
 
 # filename = 'run-saale-2B'
 # fig = plt.figure(figsize=(7.125, 7.125))
@@ -97,6 +118,7 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 # fig.savefig(dirname + '/figure/' + filename + '_uplift_field' + '.png', dpi=720)
 
 #%% ==================== PLOT: DISCREPANCY OBS VS PRE ===================== ##%
+### ======================================================================= ###
 
 # dis_ele = basin_data['initial_elevation'] - data.elevation
 # dis_thermo = basin_data['thermo_meas']['aft'] - data.afta
@@ -190,6 +212,7 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 # # fig.savefig(dirname + '/figure/' + 'run-neckar-2A_' + 'data-observed-vs-best-predicted-V3' + '.pdf', dpi=720)
 
 #%% ============== PLOT: RIVER MAP + COSMO POINT + RIVER NODE ============= ##%
+### ======================================================================= ###
 
 # fig = plt.figure(figsize=(10, 10))
 # ax1 = fig.add_subplot(111)
@@ -205,6 +228,7 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 # cs = ax1.plot(basin_data['cosmo_meas']['longitude'][s], basin_data['cosmo_meas']['latitude'][s], marker='D', ls='', c='k', ms=5, zorder=4)
 
 #%% ============== PLOT: SPECIFIC RIVER PROFILE + SPECIFIC NODE =========== ##%
+### ======================================================================= ###
 
 # fig = plt.figure(figsize=(7.125, 3.5))
 # ax1 = fig.add_subplot(111)
@@ -272,6 +296,7 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 # fig.savefig(dirname + '/figure/' + 'run-regen-3G_river+sample-profile' + '.pdf', dpi=720)
 
 #%% ================ PLOT: RIVER MAP SEGMENT + SPECIFIC NODE ============== ##%
+### ======================================================================= ###
 
 # fig = plt.figure(figsize=(7.125, 5))
 # ax1 = fig.add_subplot(111)
@@ -323,6 +348,7 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 # # fig.savefig(dirname + '/figure/' + 'run-regen-3G_river+sample-map' + '.pdf', dpi=720)
 
 #%% ============== PLOT: SPECIFIC RIVER PROFILE + SPECIFIC NODE =========== ##%
+### ======================================================================= ###
 
 # fig = plt.figure(figsize=(7.125, 3.0))
 # ax1 = fig.add_subplot(111)
@@ -334,6 +360,7 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 # fig.colorbar(s)
 
 #%% =================== PLOT: RIVER PROFILE THROUGH TIME ================== ##%
+### ======================================================================= ###
 
 # fig = plt.figure(figsize=(7.125, 3.0))
 # ax1 = fig.add_subplot(111)
@@ -378,6 +405,7 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 # # fig.savefig(dirname + '/figure/' + 'C2A_knickzone-migration' + '.pdf', dpi=720)
 
 #%% ======================== PLOT: BASAL TEMPERATURE ====================== ##%
+### ======================================================================= ###
 
 # def lithosphere_geotherm(gg, se, lh, hp_exp):
 
@@ -445,6 +473,7 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 # print('Geothermal gradient (4km): ' + str((TL[4] - TL[0])/4))
 
 #%% ======================= PLOT: BASAL TEMPERATURE 2 ===================== ##%
+### ======================================================================= ###
 
 # gg = param.sample[-1]               # geothermal gradient
 # T0 = param.T0                             # surface temperature at sea level in C
@@ -511,6 +540,7 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 #     T3[t,z] = T3[t-1,z] + TDD*(T3[t-1,z+1] - 2*T3[t-1,z] + T3[t-1,z-1]) + dt*(365.25*24*3600)*hp[z] + (T3[t-1,z+1] - T3[t-1,z])*(u*dt*(365.25*24*3600)/dz)
 
 #%% ======================== PLOT: POSTERIOR RESULTS ====================== ##%
+### ======================================================================= ###
 
 # # open the posterior results and calculate metrics
 # filename = 'run-main_variable-uplift+simple-lithology-2_A'
@@ -661,6 +691,7 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 # fig.savefig(home_dirname + '/data/figures/' + filename + '_PUB_data-observed-vs-best-predicted-V3.pdf', dpi=720)
 
 #%% ===================== PLOT: UPLIFT RATE THROUGH TIME ================== ##%
+### ======================================================================= ###
 
 # filename = 'run-main_variable-uplift+simple-lithology-2_A'
 # filename = 'run-neckar_variable-uplift-2_AO'
@@ -718,6 +749,7 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 # fig.savefig(home_dirname + '/data/figures/' + filename + '_PUB_uplift-rate-prediction.pdf', dpi=720)
 
 #%% ================= PLOT: BOX-PLOT TOPO + ANALYTICAL DATA =============== ##%
+### ======================================================================= ###
 
 # # import dataset
 # basin_list = ['neckar', 'main', 'naab', 'regen', 'weser', 'saale', 'mulde']
@@ -767,103 +799,118 @@ River_Point_Map_Plot(basin_data, param, key='initial_elevation', label='Elevatio
 # fig.savefig(home_dirname + '/data/figures/boxplot-topo+analytical-dataset.pdf', dpi=720)
 
 #%% ===================== PLOT: CHI DATA + RESPONSE TIME ================== ##%
+### ======================================================================= ###
 
-# parameters for the stream incision power model
-x = basin_data['x']
-N = len(x)
-z = results.elevation_river
-A = basin_data['area']
-if 'erodibility' in basin_data:
-    K = basin_data['erodibility']
-else:
-    K = np.ones(N)*param.K
-pairs = basin_data['pairs'].astype(int)
-m = param.m
-n = param.n
+# # parameters for the stream incision power model
+# x = basin_data['x']
+# N = len(x)
+# z = results.elevation_river
+# A = basin_data['area']
+# if 'erodibility' in basin_data:
+#     K = basin_data['erodibility']
+# else:
+#     K = np.ones(N)*param.K
+# pairs = basin_data['pairs'].astype(int)
+# m = param.m
+# n = param.n
 
-# build network
-children = defaultdict(list)
-parent = np.full(N, -1, dtype=int)
+# # build network
+# children = defaultdict(list)
+# parent = np.full(N, -1, dtype=int)
 
-for p, c in pairs:
-    p -= 1
-    c -= 1
-    children[p].append(c)
-    parent[c] = p
+# for p, c in pairs:
+#     p -= 1
+#     c -= 1
+#     children[p].append(c)
+#     parent[c] = p
 
-# outlet = node with no parent
-outlet = np.where(parent == -1)[0]
+# # outlet = node with no parent
+# outlet = np.where(parent == -1)[0]
 
-if len(outlet) != 1:
-    raise ValueError(f"Expected one outlet, found {len(outlet)}")
-outlet = outlet[0]
+# if len(outlet) != 1:
+#     raise ValueError(f"Expected one outlet, found {len(outlet)}")
+# outlet = outlet[0]
 
-# compute slope for each node
-S = np.zeros(N)
-for p, c in pairs:
-    p -= 1
-    c -= 1
-    dx = x[c] - x[p]
-    dz = z[c] - z[p]
-    S[c] = abs(dz / dx)
+# # compute slope for each node
+# S = np.zeros(N)
+# for p, c in pairs:
+#     p -= 1
+#     c -= 1
+#     dx = x[c] - x[p]
+#     dz = z[c] - z[p]
+#     S[c] = abs(dz / dx)
 
-# give outlet the same slope as its first upstream reach
-first_child = children[outlet][0]
-S[outlet] = S[first_child]
-S = np.maximum(S, 1e-12)
+# # give outlet the same slope as its first upstream reach
+# first_child = children[outlet][0]
+# S[outlet] = S[first_child]
+# S = np.maximum(S, 1e-12)
 
-# calculate response time
-tau_river = np.zeros(N)
-integrand = 1.0 / (K * A**m * S**(n-1))
-queue = deque([outlet])
+# # calculate response time
+# tau_river = np.zeros(N)
+# integrand = 1.0 / (K * A**m * S**(n-1))
+# queue = deque([outlet])
 
-while queue:
-    p = queue.popleft()
-    for c in children[p]:
-        dx = x[c] - x[p]
-        dt = 0.5 * (integrand[p] + integrand[c]) * dx
-        tau_river[c] = tau_river[p] + dt
-        queue.append(c)
+# while queue:
+#     p = queue.popleft()
+#     for c in children[p]:
+#         dx = x[c] - x[p]
+#         dt = 0.5 * (integrand[p] + integrand[c]) * dx
+#         tau_river[c] = tau_river[p] + dt
+#         queue.append(c)
 
-# convert to Myr if desired
-tau_river = tau_river*1e-6
+# # convert to Myr if desired
+# tau_river = tau_river*1e-6
 
-# parameters for hillslope erosion
-hm = param.hm
-hn = param.hn
-hk = param.hk
-if hasattr(param, 'hlflag'):
-    hl = basin_data['hillslope']['length']
-else:
-    hl = np.ones(N)*param.hl
-Sh = np.abs((results.elevation_hillslope[-1,:] - results.elevation_hillslope[0,:])/hl)
+# # parameters for hillslope erosion
+# hm = param.hm
+# hn = param.hn
+# hk = param.hk
+# if hasattr(param, 'hlflag'):
+#     hl = basin_data['hillslope']['length']
+# else:
+#     hl = np.ones(N)*param.hl
+# Sh = np.abs((results.elevation_hillslope[-1,:] - results.elevation_hillslope[0,:])/hl)
     
-tau_hill = hl**(2 - hm)/(hk*Sh**(hn - 1))/1e6
+# tau_hill = hl**(2 - hm)/(hk*Sh**(hn - 1))/1e6
 
-# plot channel reponse time
-fig = plt.figure(figsize=(7.125, 4.0))
-ax1 = fig.add_subplot(131)
-ax2 = fig.add_subplot(132)
-ax3 = fig.add_subplot(133)
+# # plot channel reponse time
+# fig = plt.figure(figsize=(10, 4.0))
+# ax1 = fig.add_subplot(141)
+# ax2 = fig.add_subplot(142)
+# ax3 = fig.add_subplot(143)
+# ax4 = fig.add_subplot(144)
 
-tr = ax1.scatter(basin_data['longitude'], basin_data['latitude'], c=tau_river, s=25, cmap='jet')
-th = ax2.scatter(basin_data['longitude'], basin_data['latitude'], c=tau_hill, s=25, cmap='jet')
-ts = ax3.scatter(basin_data['longitude'], basin_data['latitude'], c=tau_river+tau_hill, s=25, cmap='jet')
-fig.colorbar(tr, orientation='horizontal', label='Fluvial Response\nTime (Myrs)', pad=0.05)
-fig.colorbar(th, orientation='horizontal', label='Hillslope Response\nTime (Myrs)', pad=0.05)
-fig.colorbar(ts, orientation='horizontal', label='System Response\nTime (Myrs)', pad=0.05)
+# tr = ax1.scatter(basin_data['longitude'], basin_data['latitude'], c=tau_river, s=25, cmap='jet')
+# th = ax2.scatter(basin_data['longitude'], basin_data['latitude'], c=tau_hill, s=25, cmap='jet')
+# ts = ax3.scatter(basin_data['longitude'], basin_data['latitude'], c=tau_river+tau_hill, s=25, cmap='jet')
+# rp = ax4.scatter(basin_data['longitude'], basin_data['latitude'], c='gray', s=25)
+# # cn = ax4.scatter(basin_data['longitude'][basin_data['cosmo_meas']['node']], basin_data['latitude'][basin_data['cosmo_meas']['node']], c=results.tcn*1e-3, vmin=0, vmax=150, marker='p', s=150, lw=1.5, ec='k', cmap='jet')
+# cn = ax4.scatter(basin_data['longitude'][basin_data['cosmo_meas']['node']], basin_data['latitude'][basin_data['cosmo_meas']['node']], c=results.tcn*1e-3, marker='p', s=150, lw=1.5, ec='k', cmap='jet')
 
-ax1.set_xlabel('Longitude (°)')
-ax1.set_ylabel('Latitude (°)')
-ax1.tick_params(axis='x', top=True, labeltop=True, bottom=False, labelbottom=False)
-ax1.xaxis.set_label_position('top') 
-ax2.set_xlabel('Longitude (°)')
-ax2.tick_params(axis='x', top=True, labeltop=True, bottom=False, labelbottom=False)
-ax2.tick_params(axis='y', labelleft=False)
-ax2.xaxis.set_label_position('top') 
-ax3.set_xlabel('Longitude (°)')
-ax3.tick_params(axis='x', top=True, labeltop=True, bottom=False, labelbottom=False)
-ax3.tick_params(axis='y', labelleft=False)
-ax3.xaxis.set_label_position('top') 
+# fig.colorbar(tr, orientation='horizontal', label='Fluvial Response\nTime (Myrs)', pad=0.05)
+# fig.colorbar(th, orientation='horizontal', label='Hillslope Response\nTime (Myrs)', pad=0.05)
+# fig.colorbar(ts, orientation='horizontal', label='System Response\nTime (Myrs)', pad=0.05)
+# fig.colorbar(cn, orientation='horizontal', label='CRNC (atoms/g x10$^{3}$)', pad=0.05)
 
-fig.tight_layout()
+# ax1.set_xlabel('Longitude (°)')
+# ax1.set_ylabel('Latitude (°)')
+# ax1.tick_params(axis='x', top=True, labeltop=True, bottom=False, labelbottom=False)
+# ax1.xaxis.set_label_position('top') 
+# ax2.set_xlabel('Longitude (°)')
+# ax2.tick_params(axis='x', top=True, labeltop=True, bottom=False, labelbottom=False)
+# ax2.tick_params(axis='y', labelleft=False)
+# ax2.xaxis.set_label_position('top') 
+# ax3.set_xlabel('Longitude (°)')
+# ax3.tick_params(axis='x', top=True, labeltop=True, bottom=False, labelbottom=False)
+# ax3.tick_params(axis='y', labelleft=False)
+# ax3.xaxis.set_label_position('top') 
+# ax4.set_xlabel('Longitude (°)')
+# ax4.tick_params(axis='x', top=True, labeltop=True, bottom=False, labelbottom=False)
+# ax4.tick_params(axis='y', labelleft=False)
+# ax4.xaxis.set_label_position('top') 
+
+# # fig.suptitle('LEM Parameters: U=0.05[60-30 Myrs] + U=0.1[30-0 Myrs]; hl=random[50-250 m]; hk=0.01')
+
+# fig.tight_layout()
+# # fig.savefig(home_dirname + '/data/figures/system-timescale-sensitivity+CRNC_test2.png', dpi=720)
+# # fig.savefig(home_dirname + '/data/figures/system-timescale-sensitivity+CRNC_test2.pdf', dpi=720)

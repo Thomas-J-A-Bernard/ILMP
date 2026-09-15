@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -248,8 +249,112 @@ def Tilting_to_Uplift(basin_data, param, direction='degree', uplift=[0.0], gradi
             arg = np.argwhere(block == block_ind[i])
             basin_data['uplift'][:,arg] = block_uplift[i]
             
+def Tilting_Uplift(basin_data, param, uplift=[0.05], gradient=[0.0], degree=[0.0], time=[], direction='degree'):
+    '''
+    DESCRIPTION:
+        1) Apply tilting to the uplift field with a given gradient and direction. 2) You can change the uplift field 
+        at specific time. In this case, the uplift, gradient and degree parameters have to be the same size while the
+        time parameter have to be one size down.
+    ----------
+    PARAMETERS:
+    basin_data : dictionnary
+        information of the basin and should contain 'latittude' and 'longitude' at least
+    param : structure
+        parameter for the model
+    direction : string
+        'east', 'west', 'north', 'south', or 'degree'. set the direction of the tilting
+    uplift : list of float
+        maximum uplift of the tilting
+    gradient : float
+        gradient of the tilting
+    degree : float
+        direction in degree if the tilting
+    time : float
+        time for the change of uplift
+    RETURN:
+    -------
+    None
+    '''
     
+    n = len(time)
+    tsteps = int(param.tt*1e6/param.dt)
+    xsteps = len(basin_data['x'])
 
+    lat = basin_data['latitude']
+    lon = basin_data['longitude']
+
+    lon_min = np.min(lon)
+    lon_max = np.max(lon)
+    lon_dif = lon_max - lon_min
+
+    lat_min = np.min(lat)
+    lat_max = np.max(lat)
+    lat_dif = lat_max - lat_min
+
+    U = np.zeros([n+1, xsteps])
+    for i in range(n + 1):
+        
+        if direction == 'east':
+            a = abs((lon - lon_min)/lon_dif) * gradient
+            u = uplift*a + uplift*abs(gradient - 1)
+            
+        if direction == 'west':
+            a = abs((lon - lon_min)/lon_dif - 1) * gradient
+            u = uplift*a + uplift*abs(gradient - 1)
+            
+        if direction == 'north':
+            a = abs((lat - lat_min)/lat_dif) * gradient
+            u = uplift*a + uplift*abs(gradient - 1)
+            
+        if direction == 'south':
+            a = abs((lat - lat_min)/lat_dif - 1) * gradient
+            u = uplift*a + uplift*abs(gradient - 1)
+            
+        if direction == 'degree':
+            lon_middle = (lon_min + lon_max)/2
+            lat_middle = (lat_min + lat_max)/2
+            
+            radian = degree[i]*np.pi/180
+        
+            lon_new = (lon - lon_middle)*np.cos(radian) - (lat - lat_middle)*np.sin(radian) + lon_middle
+            lat_new = (lon - lon_middle)*np.sin(radian) + (lat - lat_middle)*np.cos(radian) + lat_middle
+            
+            lat_new_min = np.min(lat_new)
+            lat_new_max = np.max(lat_new)
+            lat_new_dif = lat_new_max - lat_new_min
+        
+            a = abs((lat_new - lat_new_min)/lat_new_dif - 1) * gradient[i]
+            u = uplift[i]*a + uplift[i]*abs(gradient[i] - 1)
+            
+        U[i,:] = u
+        
+    if n == 0:
+        U_final = np.squeeze(U)
+    elif n == 1:
+        U_final = np.zeros((tsteps, xsteps))
+        U_final[0:int((param.tt - time[0])*1e6/param.dt),:] = U[0,:]
+        U_final[int((param.tt - time[0])*1e6/param.dt):,:] = U[1,:]
+    else:
+        U_final = np.zeros((tsteps, xsteps))
+        for i in range(n+1):
+            print(i)
+            if i == 0:
+                U_final[0:int((param.tt - time[i])*1e6/param.dt),:] = U[i,:]
+            elif i == n:
+                U_final[int((param.tt - time[i-1])*1e6/param.dt):,:] = U[i,:]
+            else:
+                U_final[int((param.tt - time[i-1])*1e6/param.dt):int((param.tt - time[i])*1e6/param.dt),:] = U[i,:]
+        
+    param.U = U_final
+    
+def Sinusoidal_Uplift(basin_data, param, total_time, time_step, uplift, amplitude, period):
+    
+    t = np.arange(0, total_time, time_step)
+    u = uplift + amplitude * np.sin(2*np.pi * t / period)
+    U = u[:, np.newaxis]*np.ones((1, len(basin_data['x'])))
+    
+    param.U = U
+ 
 def Lithology_to_Erodibility(basin_data, param, sand=1e-6, clay=1e-6, carbonate=1e-6, peat=1e-6, silt=1e-6, diamicton=1e-6, residual_material=1e-6,
                              conglomerate=1e-6, impact_generated_material=1e-6, sandstone=1e-6, gravel=1e-6, limestone=1e-6, mudstone=1e-6,
                              claystone=1e-6, dolomite=1e-6, shale=1e-6, quartzite=1e-6, wacke=1e-6, plutonic=1e-6, marble=1e-6, metamorphic=1e-6,
@@ -643,7 +748,28 @@ def Cosmogenic_Nuclide3(basin_data, filename):
 def Variable_Hillslope_lenght(basin_data, param, random=False, minimum=100, maximum=200):
     
     param.hlflag = 1
+    basin_data['hillslope'] = {}
     
-    if random:
-        basin_data['hillslope'] = {}
-        basin_data['hillslope']['length'] = np.random.randint(100, 200, len(basin_data['initial_elevation']))
+    if random  == True:
+        basin_data['hillslope']['length'] = np.random.randint(minimum, maximum, len(basin_data['initial_elevation']))
+        
+    elif random == False:
+        basin_data['hillslope']['length'] = np.round(minimum)
+        
+    elif random == 'topo':
+        z = basin_data['initial_elevation']
+        min_z = np.min(z)
+        max_z = np.max(z)
+        scaling = (z - min_z)/(max_z-min_z)
+        basin_data['hillslope']['length'] = np.round(minimum + ((maximum - minimum)*scaling))
+    
+    elif random == 'topo reverse':
+        z = basin_data['initial_elevation']
+        min_z = np.min(z)
+        max_z = np.max(z)
+        scaling = 1 - ((z - min_z)/(max_z-min_z))
+        basin_data['hillslope']['length'] = np.round(minimum + ((maximum - minimum)*scaling))
+        
+    else:
+        sys.exit('random is not a valid entry')
+    

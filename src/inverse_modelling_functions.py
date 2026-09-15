@@ -172,11 +172,33 @@ def CreatePrior(sim_name):
     return p
 
 def BuildModelledData(basin_data, data, rng, elevation='normal', tcn=True, ahea=True, afta=True, aftmtl=True):
+    '''
+    DESCRIPTION:
+        Create an array of the synthetic data estimated by the landscape evolution model. This function has to be in accord with BuildObservedData function
+    ----------
+    PARAMETERS:
+    basin_data : dictionnary
+        information of the basin
+    data : class
+        results of the simulation
+    rng: random state instance
+        create with numpy random.RandomState() function
+    elevation: string
+        method for how elevation data is store.
+        'normal': all river node elevation are taken
+        'specific': only first and last river node of each tributary are taken
+    tcn, ahea, afta, aftmtl: boolean
+        include or not the modelled cosmogenic radionuclide concentration, apatite helium age and apatite fssion track age and mean track length
+    ----------
+    RETURNS:
+    modelled:
+        array of simulated data 
+    '''
     
     if elevation == 'normal':
         modelled = data.elevation + rng.normal(loc=0, scale=16/2)
     elif elevation == 'specific':
-        modelled = GetSpecificElevation(basin_data, data.elevation + rng.normal(loc=0, scale=16/2))
+        modelled = GetSpecificElevation(basin_data, data.elevation_river + rng.normal(loc=0, scale=16/2))
     
     if tcn:
         if 'tcn' in basin_data['cosmo_meas']:
@@ -200,6 +222,24 @@ def BuildModelledData(basin_data, data, rng, elevation='normal', tcn=True, ahea=
     return modelled
     
 def BuildObservedData(basin_data, elevation='normal', tcn=True, ahea=True, afta=True, aftmtl=True):
+    '''
+    DESCRIPTION:
+        Create an array of the observed data estimated by the landscape evolution model. This function has to be in accord with BuildModelledData function
+    ----------
+    PARAMETERS:
+    basin_data : dictionnary
+        information of the basin
+    elevation: string
+        method for how elevation data is store.
+        'normal': all river node elevation are taken
+        'specific': only first and last river node of each tributary are taken
+    tcn, ahea, afta, aftmtl: boolean
+        include or not the modelled cosmogenic radionuclide concentration, apatite helium age and apatite fission track age and mean track length
+    ----------
+    RETURNS:
+    observed:
+        array of simulated data 
+    '''
     
     if elevation == 'normal':
         observed = basin_data['initial_elevation']
